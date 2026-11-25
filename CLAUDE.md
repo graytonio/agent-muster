@@ -25,3 +25,11 @@ Rust CLI that runs multi-agent workflows on a herdr server. See `PLAN.md` for th
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR (and pushes to `main`): fmt + clippy, tests on Linux and macOS, and a static `x86_64-unknown-linux-musl` build. The `ci` job aggregates them and is the one check to require in branch protection. Run `just check` locally before pushing.
+
+The toolchain is pinned in `rust-toolchain.toml`; rustup installs it automatically. Bump it in its own PR and fix any new lints there.
+
+## Releasing
+
+1. In a PR, bump `version` in `Cargo.toml` (and `Cargo.lock` via `cargo check`), and merge it.
+2. Tag the merge commit on `main` and push the tag: `git tag v0.2.0 && git push origin v0.2.0`.
+3. `.github/workflows/release.yml` checks that the tag matches `Cargo.toml`, runs the full CI suite, builds `muster` for x86_64/aarch64 Linux (static musl) and x86_64/aarch64 macOS, and publishes a GitHub release with `muster-<version>-<target>.tar.gz` archives (binary plus `RUNTIME.md` and `USAGE.md`) and `SHA256SUMS`. A tag with a `-` (e.g. `v0.2.0-rc.1`) is published as a prerelease.

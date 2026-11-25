@@ -1,0 +1,6 @@
+# Pin the toolchain so a new stable Rust (and its new clippy lints) can't
+# break CI on PRs that didn't change anything. Bump deliberately.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
