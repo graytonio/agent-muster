@@ -5,9 +5,13 @@ use clap::Parser;
 use muster::{config, defaults, workflow};
 use serde_json::json;
 
-use muster::cli::{Cli, Command, GlobalArgs};
+use muster::cli::{Cli, Command, GlobalArgs, StartArgs};
 use muster::config::Config;
+use muster::doctor;
+use muster::engine::{self, Brief, Engine, Outcome, StartRequest};
 use muster::error::{exit, exit_code, MusterError};
+use muster::herdr::CliHerdr;
+use muster::state::{RunStatus, StateStore};
 
 fn main() {
     let cli = Cli::parse();
@@ -36,12 +40,264 @@ fn run(cli: Cli) -> Result<i32> {
         Command::Init { out, force } => cmd_init(g, &out, force),
         Command::ListWorkflows => cmd_list_workflows(g),
         Command::Validate { workflow } => cmd_validate(g, workflow.as_deref()),
-        other => {
-            bail!(MusterError::usage(format!(
-                "{other:?} is not implemented yet"
-            )))
+        Command::Doctor => cmd_doctor(g),
+        Command::Start(args) => cmd_start(g, args),
+        Command::Resume { run_id } => cmd_resume(g, &run_id),
+        Command::Status { run_id } => cmd_status(g, run_id.as_deref()),
+        Command::Clean {
+            run_id,
+            delete_branch,
+            force,
+        } => cmd_clean(g, &run_id, delete_branch, force),
+    }
+}
+
+fn load_config(g: &GlobalArgs) -> Result<Config> {
+    Config::load(&config_dir(g))
+}
+
+fn real_herdr(cfg: &Config, g: &GlobalArgs) -> CliHerdr {
+    CliHerdr::new(cfg.herdr_bin.clone(), cfg.herdr_session.clone(), g.verbose)
+}
+
+fn print_outcome(g: &GlobalArgs, o: &Outcome) -> i32 {
+    let code = o.exit_code();
+    let mut v = serde_json::to_value(o).unwrap_or_default();
+    v["ok"] = json!(code == exit::OK);
+    v["exit_code"] = json!(code);
+    emit(g, v, || match o.status {
+        RunStatus::Done => match &o.pr_url {
+            Some(url) => println!("{}: done, PR {url}", o.run_id),
+            None => println!(
+                "{}: done, artifacts in {}",
+                o.run_id,
+                o.run_dir
+                    .as_deref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            ),
+        },
+        RunStatus::NeedsHuman => println!(
+            "{}: needs a human: {}\nresume with: muster resume {}",
+            o.run_id,
+            o.reason.as_deref().unwrap_or(""),
+            o.run_id
+        ),
+        RunStatus::Failed => println!(
+            "{}: failed: {}",
+            o.run_id,
+            o.reason.as_deref().unwrap_or("")
+        ),
+        RunStatus::Running => println!("{}: running", o.run_id),
+    });
+    code
+}
+
+fn cmd_start(g: &GlobalArgs, args: StartArgs) -> Result<i32> {
+    let cfg = load_config(g)?;
+    if args.detach {
+        return detach(g, &cfg, args);
+    }
+    let brief = match &args.brief_file {
+        Some(p) => Brief::File(p.clone()),
+        None => Brief::Stdin,
+    }
+    .read()?;
+    let herdr = real_herdr(&cfg, g);
+    let engine = Engine::new(&cfg, &herdr, g.verbose, !g.json);
+    let outcome = engine.start(StartRequest {
+        workflow: args.workflow,
+        repo: args.repo,
+        brief,
+        run_id: args.run_id,
+        skip: args.skip,
+    })?;
+    Ok(print_outcome(g, &outcome))
+}
+
+/// Re-exec `muster start` in the background with a fixed run id, logging to
+/// `<log_dir>/<run>.log`.
+fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let store = StateStore::new(cfg.state_dir.clone());
+    store.ensure()?;
+    let id = match &args.run_id {
+        Some(id) => id.clone(),
+        None => store.next_run_id(&args.workflow)?,
+    };
+    muster::state::check_run_id(&id)?;
+    if store.exists(&id) {
+        bail!(MusterError::usage(format!("run {id} already exists")));
+    }
+    std::fs::create_dir_all(&cfg.log_dir)?;
+    let brief_path = match &args.brief_file {
+        Some(p) => std::fs::canonicalize(p)
+            .map_err(|e| MusterError::usage(format!("cannot read brief {}: {e}", p.display())))?,
+        None => {
+            let text = Brief::Stdin.read()?;
+            let p = cfg.log_dir.join(format!("{id}.brief.md"));
+            std::fs::write(&p, text)?;
+            p
+        }
+    };
+    let log_path = cfg.log_dir.join(format!("{id}.log"));
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.arg("--config-dir").arg(&cfg.config_dir);
+    if g.verbose {
+        cmd.arg("-v");
+    }
+    cmd.args([
+        "start",
+        &args.workflow,
+        "--repo",
+        &args.repo,
+        "--run-id",
+        &id,
+    ])
+    .arg("--brief-file")
+    .arg(&brief_path);
+    for s in &args.skip {
+        cmd.args(["--skip", s]);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log)
+        .process_group(0);
+    let child = cmd.spawn()?;
+    emit(
+        g,
+        json!({"ok": true, "run_id": id, "pid": child.id(), "log": log_path}),
+        || println!("{id}"),
+    );
+    Ok(exit::OK)
+}
+
+fn cmd_resume(g: &GlobalArgs, id: &str) -> Result<i32> {
+    let cfg = load_config(g)?;
+    let herdr = real_herdr(&cfg, g);
+    let engine = Engine::new(&cfg, &herdr, g.verbose, !g.json);
+    let outcome = engine.resume(id)?;
+    Ok(print_outcome(g, &outcome))
+}
+
+fn cmd_status(g: &GlobalArgs, id: Option<&str>) -> Result<i32> {
+    let cfg = load_config(g)?;
+    let store = StateStore::new(cfg.state_dir.clone());
+    match id {
+        None => {
+            let rows = engine::status_rows(&store)?;
+            emit(g, json!({"ok": true, "runs": rows}), || {
+                if rows.is_empty() {
+                    println!("no runs");
+                    return;
+                }
+                println!(
+                    "{:<8} {:<12} {:<20} {:<12} {:>4}  {:<12} {:>5}",
+                    "ID", "WORKFLOW", "REPO", "STAGE", "ITER", "STATUS", "AGE"
+                );
+                for r in &rows {
+                    let status = if r.stale {
+                        format!("{} (stale)", r.status)
+                    } else {
+                        r.status.clone()
+                    };
+                    println!(
+                        "{:<8} {:<12} {:<20} {:<12} {:>4}  {:<12} {:>5}",
+                        r.id, r.workflow, r.repo, r.stage, r.iteration, status, r.age
+                    );
+                }
+            });
+        }
+        Some(id) => {
+            let mut v = engine::status_detail(&store, &cfg.config_dir, id)?;
+            v["ok"] = json!(true);
+            let human = v.clone();
+            emit(g, v, || print_detail(&human));
         }
     }
+    Ok(exit::OK)
+}
+
+fn print_detail(v: &serde_json::Value) {
+    let s = |k: &str| v[k].as_str().unwrap_or("-").to_string();
+    println!("run       {}", s("id"));
+    println!("workflow  {}", s("workflow"));
+    println!("repo      {}", s("repo"));
+    println!("branch    {}", s("branch"));
+    let status = if v["stale"].as_bool() == Some(true) {
+        format!(
+            "{} (stale: no process is driving it; resume it)",
+            s("status")
+        )
+    } else {
+        s("status")
+    };
+    println!("status    {status}");
+    if let Some(r) = v["reason"].as_str() {
+        println!("reason    {r}");
+    }
+    println!(
+        "stage     {} (iteration {})",
+        v["cursor"]["stage"].as_str().unwrap_or("finish"),
+        v["cursor"]["iteration"]
+    );
+    println!("worktree  {}", s("worktree_path"));
+    if let Some(u) = v["pr_url"].as_str() {
+        println!("pr        {u}");
+    }
+    println!("age       {}", s("age"));
+    match v["live_config_changed"].as_bool() {
+        Some(true) => println!(
+            "config    live config has changed since this run started (the run keeps its snapshot)"
+        ),
+        Some(false) => println!("config    unchanged since start"),
+        None => println!("config    live config can no longer be read for this workflow"),
+    }
+    println!("\nevents:");
+    for e in v["events"].as_array().into_iter().flatten() {
+        let stage = match (e["stage"].as_str(), e["iteration"].as_u64()) {
+            (Some(st), Some(i)) => format!("{st}#{i}"),
+            (Some(st), None) => st.to_string(),
+            _ => String::new(),
+        };
+        println!(
+            "  {}  {:<12} {:<10} {}",
+            e["at"].as_str().unwrap_or(""),
+            e["kind"].as_str().unwrap_or(""),
+            stage,
+            e["message"].as_str().unwrap_or("")
+        );
+    }
+}
+
+fn cmd_clean(g: &GlobalArgs, id: &str, delete_branch: bool, force: bool) -> Result<i32> {
+    let cfg = load_config(g)?;
+    let herdr = real_herdr(&cfg, g);
+    let engine = Engine::new(&cfg, &herdr, g.verbose, !g.json);
+    let v = engine.clean(id, delete_branch, force)?;
+    let human = v.clone();
+    emit(g, v, || {
+        for a in human["actions"].as_array().into_iter().flatten() {
+            println!("{}", a.as_str().unwrap_or(""));
+        }
+        println!("cleaned {id}");
+    });
+    Ok(exit::OK)
+}
+
+fn cmd_doctor(g: &GlobalArgs) -> Result<i32> {
+    let report = doctor::run(&config_dir(g), g.verbose);
+    let ok = report.ok();
+    let human = report.clone();
+    emit(g, serde_json::to_value(&report)?, || human.print());
+    Ok(if ok { exit::OK } else { exit::FAILED })
 }
 
 pub fn config_dir(g: &GlobalArgs) -> PathBuf {

@@ -32,3 +32,30 @@ One line per non-obvious choice, with the reason.
 - `integration status` prints text lines (`claude: current (v10) (...)`, `codex: not installed (...)`), not JSON. doctor parses them.
 - herdr 0.9.3 agent kinds: pi claude codex gemini cursor devin agy cline omp mastracode opencode copilot kimi kiro droid amp grok hermes kilo qodercli qwen letta maki muse.
 - Fixtures in `tests/fixtures/herdr/` were recorded against an isolated session (`herdr --session mdev server`), with local paths replaced by `/home/muster`. Agent responses (`agent start`/`prompt` success, `agent_not_ready`, `agent_prompt_stalled`, timeout) still need a live-agent recording: see "Manual run" in `docs/USAGE.md`. The timeout code `timeout` comes from herdr's agent skill text, not a recording. **VERIFY.**
+
+## Engine (Phases 4–5)
+
+- Run ids are `[a-z][a-z0-9]*`, at most 11 characters; roles at most 20. Agent names `<role>-<run>` then always fit herdr's 32-character limit.
+- Prompts pass the **absolute** prompt path ("Read /abs/.muster/runs/f1/prompts/plan-1.md and follow it exactly."), and template variables `run_dir`, `brief_path`, `produces` and `previous_review` are absolute too, so agents don't depend on their cwd.
+- Before prompting a stage, an existing artifact from an earlier iteration is renamed to the first free `<stem>-<k>.<ext>` (e.g. `review-1.md`), so a stale file can't satisfy the new iteration. `previous_review` follows the rename.
+- `cursor.prompted` is saved **before** `agent prompt` is sent. On `resume`, a prompted stage's artifact is re-checked first: a valid artifact (finished by hand) completes the stage without prompting. A missing artifact or a `## Blocked` artifact is the only case where resume prompts the stage again; that's an explicit human action, not an automatic retry.
+- A human can leave `.muster/runs/<run>/human-notes.md` before `resume`; the re-prompt tells the agent to read it. This gives the human a way to answer a `## Blocked` question without editing the snapshot.
+- `## Blocked` is detected as a line that is exactly `## Blocked` (case-insensitive) or starts with `## Blocked `; `### Blocked` and `## Blockers` don't count.
+- A verdict stage's artifact is checked for `## Blocked` before the verdict line, so a reviewer can block below `VERDICT: CHANGES`.
+- Stages can set `read_only = true` (planner, reviewer, investigator in the defaults). After the stage, muster lists files changed since the stage's start HEAD (committed or not, plus untracked) outside the run dir and escalates if there are any. Paths already dirty when the stage started are excluded, so a read-only stage isn't blamed for an earlier stage's leftovers. This is the enforcement for "investigate must not modify files"; Claude Code's own `--disallowedTools` can't scope writes to one directory.
+- Agent result `agent_status` other than `idle`/`done` after `--wait` (i.e. `blocked`, `unknown`) escalates. `agent_blocked`, `agent_not_ready`, `agent_prompt_stalled`, `timeout` and every other herdr error escalate too. Nothing is retried.
+- Panes: the first agent uses the worktree's root pane; each later role gets a new pane split from the most recent one, alternating right and down. On resume, a role whose agent vanished is restarted in its own pane if that pane still exists; if the pane is busy or gone, a new one is split.
+- Agents are started with `--timeout 60000` (herdr's default is 30 s; a cold Claude start can be slower).
+- muster's own commits (`muster: start f1`, `muster: plan iteration 1 for f1`) commit only the run dir (`git commit -- .muster/runs/<run>`), so they never sweep up an agent's uncommitted code. They use `--no-verify` so a target repo's pre-commit hooks can't fail on Markdown artifacts.
+- Concurrency: a run counts as active only if its status is `running` **and** its lock file is held (flock). A crashed process leaves `running` in the state file but releases the lock; `status` shows such runs as `running (stale)` and `resume` picks them up. Run creation and the count are serialized with `<state_dir>/.start.lock`.
+- `resume` re-checks the concurrency limit (excluding itself) and refuses runs that were cleaned.
+- Exit codes: setup failures before the worktree exists (fetch, `worktree create`) mark the run `failed` (exit 4). Failures in the finish step (push, `gh pr create`) escalate (`needs_human`, exit 3) so `resume` can retry the finish once the cause is fixed. `pr_url` is recorded so a resumed finish never opens a second PR.
+- `--detach` picks the run id in the parent (next free id), writes a stdin brief to `<log_dir>/<run>.brief.md`, and re-execs `muster start ... --run-id <id> --brief-file <path>` in a new process group with output to `<log_dir>/<run>.log`. Two detached starts racing for the same id: the second fails with "run already exists" in its log.
+- The PR body is written to `<state_dir>/<run>/pr-body.md` (not committed): each `pr_body_from` file under a `## <file>` heading, then a footer with the run id, workflow and run dir.
+- `clean` closes the run's agent panes, removes the worktree (`--force` only when given), optionally deletes the local branch, and keeps the state file with `cleaned_at` set so history survives.
+
+## Entire (checked against docs.entire.com CLI reference; not installed locally)
+
+- Setup per worktree: `entire enable --yes --agent <a>` once per entry in `[entire] agents` (default `["claude-code"]`), then `entire configure --local --checkpoint-remote PROVIDER:OWNER/REPO` if set. Failures are logged as warnings; the run continues.
+- Finish logs `entire checkpoint list --outgoing --json --no-pager` into the event log. The docs say `--outgoing` works with the `git-refs` backend only.
+- `ENTIRE_BIN` overrides the binary (used by tests to make it absent).
