@@ -65,3 +65,11 @@ One line per non-obvious choice, with the reason.
 - `just release` cross-builds static Linux binaries with `cargo zigbuild` (musl targets need a C toolchain for the target; zig provides one on any host). `just release-setup` installs the targets and cargo-zigbuild. `just release-host` builds only the host binary.
 - `doctor` checks only the agent CLIs for kinds the config's workflows actually use, and the matching herdr integrations, so a Claude-only deployment doesn't need `codex`.
 - `doctor` exits 4 (failed) when any check fails, 0 otherwise.
+
+## CI
+
+- One aggregate `ci` job (`needs: [lint, test, musl]`, `if: always()`) is the required check, so jobs can be added or renamed without touching branch protection.
+- Tests run on ubuntu-latest (the deployment OS) and macos-latest (dev hosts). Both were checked locally: macOS natively, Linux in a `rust:1` container as a non-root user (the read-only config test needs a non-root user, which GitHub's runners are).
+- The musl job builds x86_64 with `musl-tools` and asserts the binary is statically linked. That verifies the static Linux build in CI without cargo-zigbuild; aarch64 musl was checked once in an arm64 container.
+- `--locked` everywhere so CI fails if `Cargo.lock` is out of date.
+- Actions are pinned to major-version tags (`actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`). Pin to commit SHAs if the org requires it.

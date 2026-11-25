@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to a PR cancels the run for its previous commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # muster runs on Linux (the homelab pod); macOS is a supported dev host.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  # The deployed binary is a static musl build; make sure it still links.
+  musl:
+    name: build (x86_64-unknown-linux-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --bin muster --target x86_64-unknown-linux-musl
+      - name: Check the binary is static and runs
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/muster
+          file "$bin"
+          file "$bin" | grep -Eq 'statically linked|static-pie linked'
+          "$bin" --version
+
+  # Single check to mark as required in branch protection, so adding or
+  # renaming jobs above doesn't require updating the protection rule.
+  ci:
+    name: ci
+    if: always()
+    needs: [lint, test, musl]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          test '${{ needs.lint.result }}' = success
+          test '${{ needs.test.result }}' = success
+          test '${{ needs.musl.result }}' = success

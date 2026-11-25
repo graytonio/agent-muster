@@ -21,3 +21,7 @@ Rust CLI that runs multi-agent workflows on a herdr server. See `PLAN.md` for th
 - Record each non-obvious choice as one line in `docs/DECISIONS.md`.
 - Tests that need herdr use `fake-herdr` (`tests/fake-herdr/`) through `HERDR_BIN`. Tests that need gh use a fake script through `GH_BIN`.
 - Never commit secrets, tokens or `.env` files.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every PR (and pushes to `main`): fmt + clippy, tests on Linux and macOS, and a static `x86_64-unknown-linux-musl` build. The `ci` job aggregates them and is the one check to require in branch protection. Run `just check` locally before pushing.
