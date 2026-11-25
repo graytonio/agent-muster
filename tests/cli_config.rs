@@ -219,3 +219,47 @@ fn defaults_render_without_placeholders() {
         );
     }
 }
+
+#[test]
+fn default_workflows_have_expected_shape() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(muster(&["init", "--out", tmp.path().to_str().unwrap()])
+        .status
+        .success());
+    let o = muster(&[
+        "--json",
+        "list-workflows",
+        "--config-dir",
+        tmp.path().to_str().unwrap(),
+    ]);
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let stages = |name: &str| -> Vec<String> {
+        v["workflows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["name"] == name)
+            .unwrap()["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(stages("feature"), ["plan", "build", "review"]);
+    assert_eq!(stages("bugfix"), ["reproduce", "fix", "review"]);
+    assert_eq!(stages("investigate"), ["investigate"]);
+
+    let inv = std::fs::read_to_string(tmp.path().join("workflows/investigate.toml")).unwrap();
+    assert!(inv.contains("open_pr = false") && inv.contains("read_only = true"));
+    for wf in ["feature", "bugfix"] {
+        let t = std::fs::read_to_string(tmp.path().join(format!("workflows/{wf}.toml"))).unwrap();
+        // Operator decisions: Claude (opus) reviews, PRs are not drafts, no tutorial stage.
+        assert!(
+            t.contains("role = \"reviewer\"\nkind = \"claude\"\nargs = [\"--model\", \"opus\""),
+            "{wf}"
+        );
+        assert!(t.contains("draft = false"), "{wf}");
+        assert!(!t.contains("tutorial"), "{wf}");
+    }
+}
