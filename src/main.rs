@@ -1,27 +1,13 @@
-// Removed once every module is wired up (Phase 7).
-#![allow(dead_code)]
-
-mod cli;
-mod config;
-mod defaults;
-mod doctor;
-mod engine;
-mod error;
-mod git;
-mod herdr;
-mod render;
-mod state;
-mod workflow;
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use clap::Parser;
+use muster::{config, defaults, workflow};
 use serde_json::json;
 
-use crate::cli::{Cli, Command, GlobalArgs};
-use crate::config::Config;
-use crate::error::{exit, exit_code, MusterError};
+use muster::cli::{Cli, Command, GlobalArgs};
+use muster::config::Config;
+use muster::error::{exit, exit_code, MusterError};
 
 fn main() {
     let cli = Cli::parse();
