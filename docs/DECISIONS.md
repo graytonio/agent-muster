@@ -59,3 +59,9 @@ One line per non-obvious choice, with the reason.
 - Setup per worktree: `entire enable --yes --agent <a>` once per entry in `[entire] agents` (default `["claude-code"]`), then `entire configure --local --checkpoint-remote PROVIDER:OWNER/REPO` if set. Failures are logged as warnings; the run continues.
 - Finish logs `entire checkpoint list --outgoing --json --no-pager` into the event log. The docs say `--outgoing` works with the `git-refs` backend only.
 - `ENTIRE_BIN` overrides the binary (used by tests to make it absent).
+
+## Packaging (Phase 7)
+
+- `just release` cross-builds static Linux binaries with `cargo zigbuild` (musl targets need a C toolchain for the target; zig provides one on any host). `just release-setup` installs the targets and cargo-zigbuild. `just release-host` builds only the host binary.
+- `doctor` checks only the agent CLIs for kinds the config's workflows actually use, and the matching herdr integrations, so a Claude-only deployment doesn't need `codex`.
+- `doctor` exits 4 (failed) when any check fails, 0 otherwise.
