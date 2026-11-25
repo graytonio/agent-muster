@@ -392,10 +392,7 @@ impl<'a> Engine<'a> {
 
     fn drive(&self, st: &mut RunState, loaded: &Loaded) -> Result<Outcome> {
         let wf = &loaded.workflow;
-        loop {
-            let Some(stage_id) = st.cursor.stage.clone() else {
-                break;
-            };
+        while let Some(stage_id) = st.cursor.stage.clone() {
             let idx = wf
                 .stage_index(&stage_id)
                 .with_context(|| format!("stage {stage_id} is not in the snapshot"))?;
