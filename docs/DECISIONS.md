@@ -73,3 +73,11 @@ One line per non-obvious choice, with the reason.
 - The musl job builds x86_64 with `musl-tools` and asserts the binary is statically linked. That verifies the static Linux build in CI without cargo-zigbuild; aarch64 musl was checked once in an arm64 container.
 - `--locked` everywhere so CI fails if `Cargo.lock` is out of date.
 - Actions are pinned to major-version tags (`actions/checkout@v4`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`). Pin to commit SHAs if the org requires it.
+
+## Toolchain and releases
+
+- `rust-toolchain.toml` pins Rust 1.100.0 with rustfmt and clippy. CI was on floating `stable`, and the first run on `main` failed on a clippy lint new in 1.100 (`while_let_loop`). With the pin, toolchain bumps (and their new lints) happen in deliberate PRs. CI installs it with `rustup toolchain install`, which reads the file, instead of `dtolnay/rust-toolchain`.
+- `Cargo.toml` keeps `rust-version = 1.89` as the minimum supported version; the pin is just what CI and contributors build with.
+- Releases are tag-driven (`v*`). The workflow refuses a tag that doesn't match `Cargo.toml`'s version, calls `ci.yml` (`workflow_call`) so only commits passing the full suite ship, then builds natively on each runner: x86_64 musl on `ubuntu-latest`, aarch64 musl on `ubuntu-24.04-arm`, aarch64 macOS on `macos-latest`, and x86_64 macOS cross-compiled on `macos-latest` (not executed there). Native builds avoid needing zig/cargo-zigbuild in CI.
+- The release workflow also runs (build only, no publish) on PRs that touch `release.yml`, the toolchain file or the Cargo manifests, so the matrix is exercised before a tag depends on it.
+- Only the `publish` job gets `contents: write`; everything else is read-only.
