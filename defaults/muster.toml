@@ -1,0 +1,25 @@
+# muster global config. Paths support `~`. The data directories must be
+# writable and on persistent storage; this config dir itself is read-only.
+
+repos_dir = "~/repos"          # target repos, already cloned: <repos_dir>/<repo>
+state_dir = "~/.muster/state"  # run state and config snapshots (not committed)
+log_dir   = "~/.muster/logs"   # logs for --detach runs
+worktrees_dir = ""             # empty: herdr's default (~/.herdr/worktrees)
+max_concurrent_runs = 2
+
+[herdr]
+bin = "herdr"   # HERDR_BIN overrides
+session = ""    # empty = default session; otherwise passed as --session
+
+[git]
+remote = "origin"
+base_branch = "main"
+
+[entire]
+enabled = false
+agents = ["claude-code"]        # one `entire enable --yes --agent <a>` per entry
+checkpoint_remote = ""          # e.g. "github:<owner>/muster-checkpoints"
+
+# Per-repo overrides:
+# [repos.muster-sandbox]
+# base_branch = "main"
