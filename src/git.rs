@@ -5,6 +5,14 @@ use std::process::{Command, Output};
 
 use anyhow::{bail, Context, Result};
 
+/// Result of merging a revision into the current branch.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MergeOutcome {
+    Merged,
+    /// The merge conflicted and was aborted; these paths conflicted.
+    Conflict(Vec<String>),
+}
+
 #[derive(Debug, Clone)]
 pub struct Git {
     pub gh_bin: String,
@@ -55,6 +63,81 @@ impl Git {
 
     pub fn fetch(&self, repo: &Path, remote: &str) -> Result<()> {
         self.git(repo, &["fetch", "--quiet", remote]).map(|_| ())
+    }
+
+    /// Fetch one branch into `refs/remotes/<remote>/<branch>`.
+    pub fn fetch_branch(&self, dir: &Path, remote: &str, branch: &str) -> Result<()> {
+        let spec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+        self.git(dir, &["fetch", "--quiet", remote, &spec])
+            .map(|_| ())
+    }
+
+    /// Whether `ancestor` is reachable from `descendant`.
+    pub fn is_ancestor(&self, dir: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
+        let out = self.exec(
+            "git",
+            dir,
+            &["merge-base", "--is-ancestor", ancestor, descendant],
+        )?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => bail!(
+                "`git merge-base --is-ancestor {ancestor} {descendant}` failed in {}: {}",
+                dir.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        }
+    }
+
+    /// Whether a merge is in progress (MERGE_HEAD exists).
+    pub fn merge_in_progress(&self, dir: &Path) -> bool {
+        self.exec("git", dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Merge `rev` into the current branch with a merge commit. On conflict
+    /// the merge is aborted, leaving the branch and worktree as they were.
+    pub fn merge(&self, dir: &Path, rev: &str, message: &str) -> Result<MergeOutcome> {
+        let out = self.exec(
+            "git",
+            dir,
+            &[
+                "merge",
+                "--no-ff",
+                "--no-edit",
+                "--no-verify",
+                "-m",
+                message,
+                rev,
+            ],
+        )?;
+        if out.status.success() {
+            return Ok(MergeOutcome::Merged);
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let files = self
+            .git(dir, &["diff", "--name-only", "--diff-filter=U"])
+            .unwrap_or_default();
+        let mut files: Vec<String> = files
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        files.sort();
+        if self.merge_in_progress(dir) {
+            self.git(dir, &["merge", "--abort"])
+                .context("git merge --abort failed")?;
+        }
+        if files.is_empty() {
+            bail!(
+                "`git merge {rev}` failed in {}: {stderr} {stdout}",
+                dir.display()
+            );
+        }
+        Ok(MergeOutcome::Conflict(files))
     }
 
     pub fn head(&self, dir: &Path) -> Result<String> {

@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::config::{check_repo_name, Config};
 use crate::error::{exit, MusterError};
-use crate::git::{which, Git};
+use crate::git::{which, Git, MergeOutcome};
 use crate::herdr::{Direction, ErrorKind, Herdr, HerdrError, Sound, WorktreeRequest};
 use crate::render::{self, Vars};
 use crate::state::{
@@ -797,6 +797,57 @@ impl<'a> Engine<'a> {
 
     // --------------------------------------------------------------- finish
 
+    /// Merge `<remote>/<base_branch>` into the run branch if it has moved.
+    /// Returns `Some(reason)` when the run must escalate.
+    fn merge_base(&self, st: &mut RunState, wt: &Path) -> Result<Option<String>> {
+        let base = format!("{}/{}", st.remote, st.base_branch);
+        if let Err(e) = self.git.fetch_branch(wt, &st.remote, &st.base_branch) {
+            let reason = format!("finish: git fetch {base} failed: {e:#}");
+            st.event("error", None, &reason, None);
+            return Ok(Some(reason));
+        }
+        match self.git.is_ancestor(wt, &base, "HEAD") {
+            Ok(true) => return Ok(None),
+            Ok(false) => {}
+            Err(e) => {
+                let reason = format!("finish: merge {base} failed: {e:#}");
+                st.event("error", None, &reason, None);
+                return Ok(Some(reason));
+            }
+        }
+        let msg = format!("muster: merge {base} into {} for {}", st.branch, st.id);
+        match self.git.merge(wt, &base, &msg) {
+            Ok(MergeOutcome::Merged) => {
+                let sha = self.git.head(wt).unwrap_or_default();
+                let short = &sha[..sha.len().min(7)];
+                st.event(
+                    "merged",
+                    None,
+                    format!("{base} into {} ({short})", st.branch),
+                    None,
+                );
+                self.save(st)?;
+                Ok(None)
+            }
+            Ok(MergeOutcome::Conflict(files)) => {
+                let reason = format!(
+                    "finish: merging {base} into {} conflicts in {}; merge it by hand in {} (git merge {base}, resolve, commit), then run: muster resume {}",
+                    st.branch,
+                    files.join(", "),
+                    wt.display(),
+                    st.id
+                );
+                st.event("error", None, &reason, None);
+                Ok(Some(reason))
+            }
+            Err(e) => {
+                let reason = format!("finish: merge {base} failed: {e:#}");
+                st.event("error", None, &reason, None);
+                Ok(Some(reason))
+            }
+        }
+    }
+
     fn finish(&self, st: &mut RunState, loaded: &Loaded) -> Result<Outcome> {
         let wt = st.worktree_path.clone().context("no worktree")?;
         let run_dir = st.run_dir().context("no run dir")?;
@@ -815,6 +866,16 @@ impl<'a> Engine<'a> {
                 reason
             })
         };
+
+        if self.git.merge_in_progress(&wt) {
+            let reason = format!(
+                "finish: a merge is in progress in {}; finish it (resolve and commit) or run git merge --abort, then run: muster resume {}",
+                wt.display(),
+                st.id
+            );
+            st.event("error", None, &reason, None);
+            return self.escalate(st, "finish", reason);
+        }
 
         if self.git.is_dirty(&wt)? {
             let r = self.git.commit_all(
@@ -849,6 +910,9 @@ impl<'a> Engine<'a> {
 
         let finish = &loaded.workflow.finish;
         if finish.open_pr {
+            if let Some(reason) = self.merge_base(st, &wt)? {
+                return self.escalate(st, "finish", reason);
+            }
             let r = self.git.push(&wt, &st.remote, &st.branch);
             if let Some(reason) = step(st, r, "git push") {
                 return self.escalate(st, "finish", reason);

@@ -32,9 +32,12 @@ as_muster() {
 }
 
 # --- 1. Data dirs ----------------------------------------------------------
+# rustup's default homes (~/.rustup, ~/.cargo): every context runs as muster
+# with this HOME, so they agree even in SSH commands with no pod environment.
+# Older images used $DATA/rustup and $DATA/cargo; they are left in place.
 install -d -o muster -g muster "$DATA" "$HOME_DIR" \
   "$DATA/state" "$DATA/logs" "$DATA/repos" "$DATA/worktrees" \
-  "${RUSTUP_HOME:-$DATA/rustup}" "${CARGO_HOME:-$DATA/cargo}"
+  "$HOME_DIR/.rustup" "$HOME_DIR/.cargo"
 install -d -m 700 "$DATA/tailscale"
 cd "$HOME_DIR"
 
@@ -44,7 +47,7 @@ cd "$HOME_DIR"
 install -d -m 755 /run/muster
 env_vars=(GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MUSTER_CONFIG_DIR
           MUSTER_DATA DISABLE_AUTOUPDATER HERDR_BIN GH_BIN ENTIRE_BIN
-          RUSTUP_HOME CARGO_HOME PATH)
+          PATH)
 # shellcheck disable=SC2206
 env_vars+=(${MUSTER_ENV_EXTRA:-})
 (

@@ -51,7 +51,7 @@ Environment: `MUSTER_CONFIG_DIR`, `HERDR_BIN`, `GH_BIN`, `ENTIRE_BIN`.
    - any herdr error (timeout, stalled, not ready, blocked) → **escalate**. Nothing is ever retried automatically.
 
    After each stage muster commits the run dir (`muster: <stage> iteration <n> for <run>`).
-5. Finish: commits anything the agents left uncommitted (with a warning event), records Entire's outgoing checkpoints, pushes, and opens the PR with `gh pr create`. The PR title is the brief's first line; the body is the `pr_body_from` artifacts plus a footer.
+5. Finish: commits anything the agents left uncommitted (with a warning event), records Entire's outgoing checkpoints, then (when `open_pr` is set) fetches `<remote>/<base_branch>`. If the branch does not already contain it, finish merges it in with a merge commit (`muster: merge <remote>/<base_branch> into <branch> for <run>`, recorded as a `merged` event); if the branch already contains it, nothing happens. A conflicting merge is aborted and **escalates**. Then it pushes and opens the PR with `gh pr create`. The PR title is the brief's first line; the body is the `pr_body_from` artifacts plus a footer.
 
 **Escalation** sets the run to `needs_human`, sends a herdr notification, prints the reason and a resume hint, and exits 3.
 
@@ -65,6 +65,7 @@ Environment: `MUSTER_CONFIG_DIR`, `HERDR_BIN`, `GH_BIN`, `ENTIRE_BIN`.
 - **The review loop hit `max_iterations`**: read the last `review.md`, fix the code yourself or decide to accept it, rewrite line 1 of `review.md` to `VERDICT: APPROVE`, and resume.
 - **A read-only stage changed files**: revert those changes, then resume.
 - **Finish failed (push or PR)**: fix the cause (auth, remote) and resume; it retries only the finish step.
+- **Merging the base conflicted**: the reason names the conflicting files, and the branch is left exactly as it was (the merge is aborted). In the run's worktree, run `git merge <remote>/<base_branch>`, resolve the conflicts, commit, then `muster resume <run>`. Only finish reruns; its merge step finds the base already merged and does nothing. If you start the merge but resume before committing, finish escalates with "a merge is in progress": commit it or `git merge --abort`, then resume again.
 
 Over SSH, use `muster resume <run> --detach` so the session does not stay open until the run finishes; follow it with `muster status <run>` or the log in `<log_dir>/<run>.log`.
 
