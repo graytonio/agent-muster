@@ -77,10 +77,15 @@ merge_json "$HOME_DIR/.claude/settings.json" '.skipDangerousModePermissionPrompt
 as_muster git config --global user.name "${MUSTER_GIT_NAME:-muster}"
 as_muster git config --global user.email "${MUSTER_GIT_EMAIL:-muster@localhost}"
 as_muster git config --global init.defaultBranch main
-if [ -n "${GH_TOKEN:-}" ]; then
-  # git uses gh (and so GH_TOKEN) as its credential helper for github.com.
-  as_muster env GH_TOKEN="$GH_TOKEN" gh auth setup-git || log "warning: gh auth setup-git failed"
-else
+# git authenticates to GitHub through gh, and so GH_TOKEN. The helper is the
+# /usr/local/bin/gh wrapper, not /usr/bin/gh (which `gh auth setup-git` would
+# write), so it loads /run/muster/env in SSH sessions too. Replacing the
+# entries also clears ones an older image wrote.
+for host in https://github.com https://gist.github.com; do
+  as_muster git config --global --replace-all "credential.$host.helper" ''
+  as_muster git config --global --add "credential.$host.helper" '!/usr/local/bin/gh auth git-credential'
+done
+if [ -z "${GH_TOKEN:-}" ]; then
   log "warning: GH_TOKEN is not set; pushes and PRs will fail"
 fi
 
