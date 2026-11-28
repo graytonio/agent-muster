@@ -11,13 +11,14 @@ muster doctor                                   # is the host ready?
 muster list-workflows
 muster start feature --repo muster-sandbox --brief-file brief.md
 echo "Fix the flaky retry test" | muster start bugfix --repo muster-sandbox --brief-stdin --detach
+muster start bugfix --repo muster-sandbox --brief "Fix the flaky retry test in src/net.rs"
 muster status                                   # all runs
 muster status f1                                # one run, with its event log
 muster resume f1                                # after a human fixed what it escalated
 muster clean f1 --delete-branch                 # close panes, remove the worktree
 ```
 
-From a laptop, over Tailscale SSH: `ssh muster 'muster start feature --repo foo --brief-stdin --detach' < brief.md`.
+From a laptop, over Tailscale SSH: `ssh muster 'muster start feature --repo foo --brief-stdin --detach' < brief.md`, or for a short brief `ssh muster 'muster start bugfix --repo foo --brief "Fix the flaky retry test" --detach'`.
 
 ## Commands
 
@@ -27,7 +28,7 @@ From a laptop, over Tailscale SSH: `ssh muster 'muster start feature --repo foo 
 | `doctor` | Check the runtime contract. Non-zero exit if anything fails. |
 | `list-workflows` | Workflows in the config dir, with their stages. |
 | `validate [<workflow>]` | Load and validate config, workflows and prompts. No herdr, git or network. |
-| `start <workflow> --repo <repo> (--brief-file <path> \| --brief-stdin)` | Start a run. `--run-id <id>` to choose the id, `--skip <stage>` (repeatable) for optional stages, `--detach` to run in the background. |
+| `start <workflow> --repo <repo> (--brief <text> \| --brief-file <path> \| --brief-stdin)` | Start a run. Exactly one brief source is required (write `--brief=-x` for text starting with `-`). `--run-id <id>` to choose the id, `--skip <stage>` (repeatable) for optional stages, `--detach` to run in the background. |
 | `resume <run>` | Continue a run from its recorded stage, using its config snapshot. |
 | `status [<run>]` | A table of runs, or one run's detail and event log. Shows whether the live config changed since the run started. |
 | `clean <run> [--delete-branch] [--force]` | Close the run's panes and remove its worktree. `--force` cleans a running run and discards uncommitted changes. |
