@@ -631,6 +631,70 @@ fn detach_prints_run_id_and_runs_in_background() {
 }
 
 #[test]
+fn resume_detach_runs_in_background() {
+    let e = Env::new();
+    e.scenario(json!({"agents": {
+        "planner": [{}, {"write": {"plan.md": "# Plan\n"}}],
+        "builder": [{"write": {"build-report.md": "ok\n"}}],
+        "reviewer": [{"write": {"review.md": APPROVE}}]
+    }}));
+    assert_eq!(e.start("feature", &[]).status.code(), Some(3));
+    let t = std::time::Instant::now();
+    let o = e.muster(&["--json", "resume", "f1", "--detach"]);
+    assert!(t.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["run_id"], "f1");
+    let log = PathBuf::from(v["log"].as_str().unwrap());
+    assert!(log.ends_with("f1.log"));
+    for _ in 0..200 {
+        if e.state("f1")["status"] == "done" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        e.state("f1")["status"],
+        "done",
+        "log:\n{}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    assert_eq!(e.herdr_calls(&["agent", "prompt", "planner-f1"]).len(), 2);
+}
+
+#[test]
+fn resume_detach_unknown_run_fails_synchronously() {
+    let e = Env::new();
+    e.scenario(json!({}));
+    let o = e.muster(&["resume", "f9", "--detach"]);
+    assert_eq!(o.status.code(), Some(2), "{}", out(&o));
+    assert!(!e.root.join("logs/f9.log").exists());
+    let o = e.muster(&["--json", "resume", "f9", "--detach"]);
+    assert_eq!(o.status.code(), Some(2), "{}", out(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["exit_code"], 2);
+    assert!(!e.root.join("logs/f9.log").exists());
+}
+
+#[test]
+fn resume_detach_locked_run_fails_synchronously() {
+    let e = Env::new();
+    e.scenario(json!({"agents": {"planner": [{}]}}));
+    assert_eq!(e.start("feature", &[]).status.code(), Some(3));
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(e.root.join("state/f1.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let o = e.muster(&["resume", "f1", "--detach"]);
+    assert_eq!(o.status.code(), Some(2), "{}", out(&o));
+    assert!(out(&o).contains("another muster process"), "{}", out(&o));
+    assert!(!e.root.join("logs/f1.log").exists());
+}
+
+#[test]
 fn clean_refuses_running_run_without_force() {
     let e = Env::new();
     e.scenario(json!({"agents": {"planner": [{}]}}));
