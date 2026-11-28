@@ -675,9 +675,7 @@ fn inline_brief_starts_run() {
     let e = Env::new();
     e.scenario(json!({"agents": happy_agents()}));
     let text = "Fix the flaky retry test\n\nMore detail.";
-    let o = e.muster(&[
-        "start", "feature", "--repo", "sandbox", "--brief", text,
-    ]);
+    let o = e.muster(&["start", "feature", "--repo", "sandbox", "--brief", text]);
     assert_eq!(o.status.code(), Some(0), "{}", out(&o));
     assert_eq!(
         std::fs::read_to_string(e.run_dir("f1").join("brief.md")).unwrap(),

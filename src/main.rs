@@ -141,6 +141,7 @@ fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
         Some(p) => std::fs::canonicalize(p)
             .map_err(|e| MusterError::usage(format!("cannot read brief {}: {e}", p.display())))?,
         None => {
+            // No --brief-file here, so this is an inline (`--brief`) or stdin brief.
             let text = brief_source(&args).read()?;
             let p = cfg.log_dir.join(format!("{id}.brief.md"));
             std::fs::write(&p, text)?;
