@@ -27,7 +27,7 @@ Each [release](https://github.com/graytonio/agent-muster/releases) has these bui
 Download, verify and install, for example on Linux x86_64:
 
 ```sh
-version=0.1.1
+version=0.1.2
 target=x86_64-unknown-linux-musl
 base=https://github.com/graytonio/agent-muster/releases/download/v${version}
 
@@ -40,7 +40,7 @@ sudo install -m 755 "muster-${version}-${target}/muster" /usr/local/bin/muster
 muster --version
 ```
 
-With the GitHub CLI: `gh release download v0.1.1 -R graytonio/agent-muster -p '*x86_64-unknown-linux-musl*' -p SHA256SUMS`.
+With the GitHub CLI: `gh release download v0.1.2 -R graytonio/agent-muster -p '*x86_64-unknown-linux-musl*' -p SHA256SUMS`.
 
 Each archive also contains `RUNTIME.md` and `USAGE.md`.
 
@@ -66,7 +66,7 @@ To set it up, mount a config directory at `/etc/muster` and set these environmen
 You need Rust 1.89 or newer:
 
 ```sh
-cargo install --locked --git https://github.com/graytonio/agent-muster --tag v0.1.1 --bin muster muster
+cargo install --locked --git https://github.com/graytonio/agent-muster --tag v0.1.2 --bin muster muster
 ```
 
 ## Set up a host

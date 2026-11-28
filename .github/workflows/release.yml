@@ -194,7 +194,7 @@ jobs:
           cache-from: type=gha
       - name: Smoke test
         run: |
-          docker run -d --name smoke -v "$PWD/defaults:/etc/muster:ro" muster:smoke
+          docker run -d --name smoke -e GH_TOKEN=smoke-token -v "$PWD/defaults:/etc/muster:ro" muster:smoke
           ok=false
           for _ in $(seq 1 60); do
             if docker exec smoke muster-healthcheck; then ok=true; break; fi
@@ -202,6 +202,12 @@ jobs:
           done
           docker exec -u muster smoke muster validate
           docker exec -u muster smoke sh -c 'herdr --version && claude --version && gh --version && tailscale version'
+          # Like a non-interactive SSH command: no GH_TOKEN in the environment.
+          # gh and git's credential helper must still find the pod's token.
+          test "$(docker exec -u muster smoke env -u GH_TOKEN gh auth token)" = smoke-token
+          printf 'protocol=https\nhost=github.com\n\n' \
+            | docker exec -i -u muster smoke env -u GH_TOKEN git credential fill \
+            | grep -qx 'password=smoke-token'
           docker stop -t 30 smoke
           docker logs smoke
           test "$ok" = true

@@ -59,11 +59,12 @@ RUN useradd --uid 1000 --user-group --shell /bin/bash \
       --home-dir /var/lib/muster/home --no-create-home muster
 
 COPY bin/${TARGETARCH}/muster /usr/local/libexec/muster
-COPY muster-wrapper.sh /usr/local/bin/muster
+COPY env-wrapper.sh /usr/local/bin/muster
+COPY env-wrapper.sh /usr/local/bin/gh
 COPY entrypoint.sh /usr/local/bin/muster-entrypoint
 COPY healthcheck.sh /usr/local/bin/muster-healthcheck
 COPY profile.sh /etc/profile.d/muster.sh
-RUN chmod 755 /usr/local/libexec/muster /usr/local/bin/muster \
+RUN chmod 755 /usr/local/libexec/muster /usr/local/bin/muster /usr/local/bin/gh \
       /usr/local/bin/muster-entrypoint /usr/local/bin/muster-healthcheck \
  && chmod 644 /etc/profile.d/muster.sh \
  && /usr/local/libexec/muster --version

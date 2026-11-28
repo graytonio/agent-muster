@@ -82,3 +82,4 @@ One line per non-obvious choice, with the reason.
 - The release workflow also runs (build only, no publish) on PRs that touch `release.yml`, the toolchain file or the Cargo manifests, so the matrix is exercised before a tag depends on it.
 - Only the `publish` job gets `contents: write`; everything else is read-only.
 - The server image is built in this repo (`container/`) from the release binaries rather than in the homelab templates repo, which has no CI; the templates repo only deploys it. Tailscale runs inside the muster container (userspace networking, `--ssh`) rather than as a sidecar, so SSH sessions land where herdr and muster run.
+- In the image, `gh` and `muster` are wrappers that load `/run/muster/env` (non-interactive Tailscale SSH commands get neither the pod environment nor `/etc/profile.d`), and git's credential helper points at the `gh` wrapper instead of what `gh auth setup-git` writes (`/usr/bin/gh`).
