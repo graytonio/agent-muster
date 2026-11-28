@@ -1,4 +1,4 @@
-# The muster server image: muster, herdr, Claude Code, git, gh and tailscale,
+# The muster server image: muster, herdr, Claude Code, git, gh, tailscale and rustup,
 # implementing the runtime contract in docs/RUNTIME.md. Built for linux/amd64
 # and linux/arm64 by .github/workflows/release.yml from the release binaries.
 #
@@ -19,12 +19,19 @@ ARG HERDR_SHA256_ARM64=4de7aa3e25678812e92960de64f7c2aaa1bca1f0f80a3c5e559837e23
 # Claude Code: the native binary, checked against the release manifest.
 ARG CLAUDE_VERSION=2.1.326
 
+# rustup, pinned by checksum. Toolchains are not in the image: they install
+# onto the persistent volume (RUSTUP_HOME), at startup for each cloned repo
+# with a rust-toolchain file, or on first use.
+ARG RUSTUP_VERSION=1.29.3
+ARG RUSTUP_SHA256_AMD64=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
+ARG RUSTUP_SHA256_ARM64=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
+
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash-completion ca-certificates curl git gnupg jq less openssh-client \
-      procps tini util-linux \
+      bash-completion build-essential ca-certificates curl git gnupg jq less \
+      openssh-client pkg-config procps tini util-linux \
  && install -d -m 755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /etc/apt/keyrings/githubcli.gpg \
@@ -39,10 +46,21 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN case "${TARGETARCH}" in \
-      amd64) herdr_arch=x86_64;  herdr_sum=${HERDR_SHA256_AMD64}; claude_platform=linux-x64 ;; \
-      arm64) herdr_arch=aarch64; herdr_sum=${HERDR_SHA256_ARM64}; claude_platform=linux-arm64 ;; \
+      amd64) herdr_arch=x86_64;  herdr_sum=${HERDR_SHA256_AMD64}; claude_platform=linux-x64 \
+             rustup_triple=x86_64-unknown-linux-gnu;  rustup_sum=${RUSTUP_SHA256_AMD64} ;; \
+      arm64) herdr_arch=aarch64; herdr_sum=${HERDR_SHA256_ARM64}; claude_platform=linux-arm64 \
+             rustup_triple=aarch64-unknown-linux-gnu; rustup_sum=${RUSTUP_SHA256_ARM64} ;; \
       *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
+ && curl -fsSL -o /usr/local/bin/rustup \
+      "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_triple}/rustup-init" \
+ && echo "${rustup_sum}  /usr/local/bin/rustup" | sha256sum -c - \
+ && chmod 755 /usr/local/bin/rustup \
+ && for proxy in cargo rustc rustdoc rustfmt cargo-fmt cargo-clippy clippy-driver \
+                 rust-analyzer rust-gdb rust-lldb; do \
+      ln -s rustup "/usr/local/bin/${proxy}"; \
+    done \
+ && rustup --version \
  && curl -fsSL -o /usr/local/bin/herdr \
       "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-${herdr_arch}" \
  && echo "${herdr_sum}  /usr/local/bin/herdr" | sha256sum -c - \
@@ -71,7 +89,10 @@ RUN chmod 755 /usr/local/libexec/muster /usr/local/bin/muster /usr/local/bin/gh 
 
 ENV MUSTER_DATA=/var/lib/muster \
     MUSTER_CONFIG_DIR=/etc/muster \
-    DISABLE_AUTOUPDATER=1
+    DISABLE_AUTOUPDATER=1 \
+    RUSTUP_HOME=/var/lib/muster/rustup \
+    CARGO_HOME=/var/lib/muster/cargo \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/muster/cargo/bin
 
 VOLUME /var/lib/muster
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/muster-entrypoint"]
