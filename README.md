@@ -89,6 +89,7 @@ cargo install --locked --git https://github.com/graytonio/agent-muster --tag v0.
 muster list-workflows
 muster start feature --repo my-service --brief-file brief.md
 echo "Fix the flaky retry test" | muster start bugfix --repo my-service --brief-stdin --detach
+muster start bugfix --repo my-service --brief "Fix the flaky retry test in src/net.rs"
 muster status            # all runs
 muster status f1         # one run and its event log
 muster resume f1         # after fixing whatever the run escalated
@@ -99,6 +100,7 @@ From another machine, over SSH:
 
 ```sh
 ssh muster@muster 'muster start feature --repo my-service --brief-stdin --detach' < brief.md
+ssh muster@muster 'muster start bugfix --repo my-service --brief "Fix the flaky retry test" --detach'
 ```
 
 These workflows ship with muster:

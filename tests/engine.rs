@@ -669,3 +669,92 @@ fn usage_errors() {
     let o = e.muster(&["start", "feature", "--repo", "sandbox"]);
     assert_eq!(o.status.code(), Some(2), "brief is required");
 }
+
+#[test]
+fn inline_brief_starts_run() {
+    let e = Env::new();
+    e.scenario(json!({"agents": happy_agents()}));
+    let text = "Fix the flaky retry test\n\nMore detail.";
+    let o = e.muster(&["start", "feature", "--repo", "sandbox", "--brief", text]);
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+    assert_eq!(
+        std::fs::read_to_string(e.run_dir("f1").join("brief.md")).unwrap(),
+        text
+    );
+    let tracked = common::git(&e.worktree("f1"), &["ls-files", ".muster"]);
+    assert!(tracked.contains(".muster/runs/f1/brief.md"), "{tracked}");
+    let args = std::fs::read_to_string(e.root.join("gh.args")).unwrap();
+    assert!(args.contains("Fix the flaky retry test"), "{args}");
+    assert!(!args.contains("More detail."), "{args}");
+    let o = e.muster(&["--json", "status", "f1"]);
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["ok"], true, "{}", out(&o));
+    assert_eq!(v["status"], "done");
+    assert!(v["run_dir"].is_string());
+}
+
+#[test]
+fn inline_brief_detach() {
+    let e = Env::new();
+    e.scenario(json!({"agents": happy_agents()}));
+    let o = e.muster(&[
+        "--json",
+        "start",
+        "feature",
+        "--repo",
+        "sandbox",
+        "--brief",
+        "Detached inline brief",
+        "--detach",
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["run_id"], "f1");
+    let log = PathBuf::from(v["log"].as_str().unwrap());
+    for _ in 0..200 {
+        if e.root.join("state/f1.json").exists() && e.state("f1")["status"] == "done" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_eq!(
+        e.state("f1")["status"],
+        "done",
+        "log:\n{}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    assert!(std::fs::read_to_string(e.run_dir("f1").join("brief.md"))
+        .unwrap()
+        .contains("Detached inline brief"));
+    assert!(log.with_file_name("f1.brief.md").exists());
+}
+
+#[test]
+fn brief_source_conflicts_exit_2() {
+    let e = Env::new();
+    e.scenario(json!({}));
+    let file = e.root.join("some-brief.md");
+    std::fs::write(&file, "x").unwrap();
+    let file = file.to_str().unwrap();
+    let base = ["start", "feature", "--repo", "sandbox"];
+    let cases: [&[&str]; 3] = [
+        &["--brief", "x", "--brief-file", file],
+        &["--brief", "x", "--brief-stdin"],
+        &["--brief-file", file, "--brief-stdin"],
+    ];
+    for extra in cases {
+        let args: Vec<&str> = base.iter().chain(extra.iter()).copied().collect();
+        let o = e.muster_in(&args, Some("x"));
+        assert_eq!(o.status.code(), Some(2), "{extra:?}: {}", out(&o));
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("cannot be used with"),
+            "{extra:?}: {}",
+            out(&o)
+        );
+    }
+    for empty in ["", "   "] {
+        let o = e.muster(&["start", "feature", "--repo", "sandbox", "--brief", empty]);
+        assert_eq!(o.status.code(), Some(2), "{}", out(&o));
+        assert!(out(&o).contains("the brief is empty"), "{}", out(&o));
+    }
+}

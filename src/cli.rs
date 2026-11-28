@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -73,6 +73,12 @@ pub enum Command {
 }
 
 #[derive(Debug, Args, Clone)]
+#[command(group(
+    ArgGroup::new("brief_source")
+        .required(true)
+        .multiple(false)
+        .args(["brief", "brief_file", "brief_stdin"])
+))]
 pub struct StartArgs {
     /// Workflow name (workflows/<name>.toml)
     pub workflow: String,
@@ -81,13 +87,12 @@ pub struct StartArgs {
     #[arg(long)]
     pub repo: String,
 
+    /// The brief text itself (its first line becomes the PR title)
+    #[arg(long, value_name = "TEXT")]
+    pub brief: Option<String>,
+
     /// Read the brief from this file
-    #[arg(
-        long,
-        value_name = "PATH",
-        conflicts_with = "brief_stdin",
-        required_unless_present = "brief_stdin"
-    )]
+    #[arg(long, value_name = "PATH")]
     pub brief_file: Option<PathBuf>,
 
     /// Read the brief from standard input
