@@ -202,6 +202,18 @@ jobs:
           done
           docker exec -u muster smoke muster validate
           docker exec -u muster smoke sh -c 'herdr --version && claude --version && gh --version && tailscale version && rustup --version && cc --version'
+          # A session with no pod environment (like a non-interactive SSH command)
+          # must use the same rustup home as docker exec, the herdr server and its agents.
+          bare_home=$(docker exec -u muster smoke env -i HOME=/var/lib/muster/home PATH=/usr/local/bin:/usr/bin:/bin rustup show home)
+          pod_home=$(docker exec -u muster smoke rustup show home)
+          echo "bare: $bare_home, pod: $pod_home"
+          test "$bare_home" = /var/lib/muster/home/.rustup
+          test "$pod_home" = "$bare_home"
+          # Neither the herdr server (whose environment the agents inherit) nor the
+          # saved SSH environment overrides the homes.
+          herdr_pid=$(docker exec smoke pgrep -o -u muster -x herdr)
+          if docker exec smoke sh -c "tr '\0' '\n' < /proc/$herdr_pid/environ" | grep -E '^(RUSTUP|CARGO)_HOME='; then exit 1; fi
+          if docker exec smoke grep -E '(RUSTUP|CARGO)_HOME' /run/muster/env; then exit 1; fi
           # The repos dir is trusted for Claude Code (no trust prompt on start).
           docker exec -u muster smoke jq -e '.projects["/var/lib/muster/repos"].hasTrustDialogAccepted == true' /var/lib/muster/home/.claude.json
           # Like a non-interactive SSH command: no GH_TOKEN in the environment.

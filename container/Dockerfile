@@ -20,8 +20,10 @@ ARG HERDR_SHA256_ARM64=4de7aa3e25678812e92960de64f7c2aaa1bca1f0f80a3c5e559837e23
 ARG CLAUDE_VERSION=2.1.326
 
 # rustup, pinned by checksum. Toolchains are not in the image: they install
-# onto the persistent volume (RUSTUP_HOME), at startup for each cloned repo
-# with a rust-toolchain file, or on first use.
+# into rustup's default home (~/.rustup under the muster user's home, on the
+# persistent volume), at startup for each cloned repo with a rust-toolchain
+# file, or on first use. The default is the same in every context, including
+# SSH commands that get no pod environment.
 ARG RUSTUP_VERSION=1.29.3
 ARG RUSTUP_SHA256_AMD64=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
 ARG RUSTUP_SHA256_ARM64=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
@@ -90,9 +92,7 @@ RUN chmod 755 /usr/local/libexec/muster /usr/local/bin/muster /usr/local/bin/gh 
 ENV MUSTER_DATA=/var/lib/muster \
     MUSTER_CONFIG_DIR=/etc/muster \
     DISABLE_AUTOUPDATER=1 \
-    RUSTUP_HOME=/var/lib/muster/rustup \
-    CARGO_HOME=/var/lib/muster/cargo \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/muster/cargo/bin
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/muster/home/.cargo/bin
 
 VOLUME /var/lib/muster
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/muster-entrypoint"]
