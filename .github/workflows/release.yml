@@ -201,7 +201,9 @@ jobs:
             sleep 2
           done
           docker exec -u muster smoke muster validate
-          docker exec -u muster smoke sh -c 'herdr --version && claude --version && gh --version && tailscale version'
+          docker exec -u muster smoke sh -c 'herdr --version && claude --version && gh --version && tailscale version && rustup --version && cc --version'
+          # The repos dir is trusted for Claude Code (no trust prompt on start).
+          docker exec -u muster smoke jq -e '.projects["/var/lib/muster/repos"].hasTrustDialogAccepted == true' /var/lib/muster/home/.claude.json
           # Like a non-interactive SSH command: no GH_TOKEN in the environment.
           # gh and git's credential helper must still find the pod's token.
           test "$(docker exec -u muster smoke env -u GH_TOKEN gh auth token)" = smoke-token

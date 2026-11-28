@@ -3,7 +3,8 @@
 #   1. prepares the data dirs on the persistent volume
 #   2. saves the pod's tokens for SSH sessions (/run/muster/env)
 #   3. sets up Claude Code, git and gh for the muster user
-#   4. clones MUSTER_REPOS that aren't cloned yet
+#   4. clones MUSTER_REPOS that aren't cloned yet, marks every repo trusted
+#      for Claude Code and installs pinned Rust toolchains
 #   5. starts tailscaled with Tailscale SSH (when TS_AUTHKEY is set)
 #   6. runs the herdr server as the muster user until the pod stops
 #
@@ -32,7 +33,8 @@ as_muster() {
 
 # --- 1. Data dirs ----------------------------------------------------------
 install -d -o muster -g muster "$DATA" "$HOME_DIR" \
-  "$DATA/state" "$DATA/logs" "$DATA/repos" "$DATA/worktrees"
+  "$DATA/state" "$DATA/logs" "$DATA/repos" "$DATA/worktrees" \
+  "${RUSTUP_HOME:-$DATA/rustup}" "${CARGO_HOME:-$DATA/cargo}"
 install -d -m 700 "$DATA/tailscale"
 cd "$HOME_DIR"
 
@@ -41,7 +43,8 @@ cd "$HOME_DIR"
 # wrapper and /etc/profile.d/muster.sh source this file.
 install -d -m 755 /run/muster
 env_vars=(GH_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MUSTER_CONFIG_DIR
-          MUSTER_DATA DISABLE_AUTOUPDATER HERDR_BIN GH_BIN ENTIRE_BIN)
+          MUSTER_DATA DISABLE_AUTOUPDATER HERDR_BIN GH_BIN ENTIRE_BIN
+          RUSTUP_HOME CARGO_HOME PATH)
 # shellcheck disable=SC2206
 env_vars+=(${MUSTER_ENV_EXTRA:-})
 (
@@ -98,6 +101,30 @@ for repo in ${MUSTER_REPOS:-}; do
   log "cloning $repo into $dest"
   as_muster env GH_TOKEN="${GH_TOKEN:-}" gh repo clone "$repo" "$dest" \
     || log "warning: could not clone $repo (muster doctor will report it)"
+done
+
+# Claude Code asks "do you trust this folder?" the first time it starts in a
+# repo, which muster sees as agent_not_ready. Run worktrees count as their
+# main repo, so trusting each clone (and the parent dirs) is enough. A repo
+# cloned by hand is trusted on the next pod start.
+trust_dir() {
+  merge_json "$HOME_DIR/.claude.json" \
+    ".projects[$(jq -n --arg p "$1" '$p')].hasTrustDialogAccepted = true"
+}
+trust_dir "$DATA/repos"
+trust_dir "$DATA/worktrees"
+for dir in "$DATA"/repos/*/; do
+  [ -d "$dir/.git" ] || continue
+  dir=${dir%/}
+  trust_dir "$dir"
+  # Install the Rust toolchain a repo pins, so agents can build and test it
+  # without each racing to download it.
+  if [ -f "$dir/rust-toolchain.toml" ] || [ -f "$dir/rust-toolchain" ]; then
+    log "installing the Rust toolchain for ${dir##*/}"
+    # shellcheck disable=SC2016 # $1 expands in the inner sh
+    as_muster sh -c 'cd "$1" && rustup toolchain install' _ "$dir" \
+      || log "warning: could not install the Rust toolchain for ${dir##*/}"
+  fi
 done
 
 # --- 5. Tailscale ----------------------------------------------------------

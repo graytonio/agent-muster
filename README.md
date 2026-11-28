@@ -27,7 +27,7 @@ Each [release](https://github.com/graytonio/agent-muster/releases) has these bui
 Download, verify and install, for example on Linux x86_64:
 
 ```sh
-version=0.1.2
+version=0.1.3
 target=x86_64-unknown-linux-musl
 base=https://github.com/graytonio/agent-muster/releases/download/v${version}
 
@@ -40,13 +40,13 @@ sudo install -m 755 "muster-${version}-${target}/muster" /usr/local/bin/muster
 muster --version
 ```
 
-With the GitHub CLI: `gh release download v0.1.2 -R graytonio/agent-muster -p '*x86_64-unknown-linux-musl*' -p SHA256SUMS`.
+With the GitHub CLI: `gh release download v0.1.3 -R graytonio/agent-muster -p '*x86_64-unknown-linux-musl*' -p SHA256SUMS`.
 
 Each archive also contains `RUNTIME.md` and `USAGE.md`.
 
 ### Container image
 
-`ghcr.io/graytonio/muster:<version>` (linux/amd64 and linux/arm64) is a ready-made server. It contains muster, herdr, Claude Code, git, gh and Tailscale. Its entrypoint does the following:
+`ghcr.io/graytonio/muster:<version>` (linux/amd64 and linux/arm64) is a ready-made server. It contains muster, herdr, Claude Code, git, gh, Tailscale, and rustup with a C toolchain. Its entrypoint does the following:
 
 1. Prepares the data directories on a volume mounted at `/var/lib/muster`.
 2. Clones the repos listed in `MUSTER_REPOS`.
@@ -66,7 +66,7 @@ To set it up, mount a config directory at `/etc/muster` and set these environmen
 You need Rust 1.89 or newer:
 
 ```sh
-cargo install --locked --git https://github.com/graytonio/agent-muster --tag v0.1.2 --bin muster muster
+cargo install --locked --git https://github.com/graytonio/agent-muster --tag v0.1.3 --bin muster muster
 ```
 
 ## Set up a host
