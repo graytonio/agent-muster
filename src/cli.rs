@@ -57,7 +57,12 @@ pub enum Command {
     /// Start a workflow run
     Start(StartArgs),
     /// Continue a run that needs a human, from its recorded stage
-    Resume { run_id: String },
+    Resume {
+        run_id: String,
+        /// Run in the background, logging to <log_dir>/<run>.log, and print the run id
+        #[arg(long)]
+        detach: bool,
+    },
     /// Show all runs, or the detail and event log for one run
     Status { run_id: Option<String> },
     /// Close a run's panes and remove its worktree

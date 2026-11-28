@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -42,7 +43,7 @@ fn run(cli: Cli) -> Result<i32> {
         Command::Validate { workflow } => cmd_validate(g, workflow.as_deref()),
         Command::Doctor => cmd_doctor(g),
         Command::Start(args) => cmd_start(g, args),
-        Command::Resume { run_id } => cmd_resume(g, &run_id),
+        Command::Resume { run_id, detach } => cmd_resume(g, &run_id, detach),
         Command::Status { run_id } => cmd_status(g, run_id.as_deref()),
         Command::Clean {
             run_id,
@@ -105,7 +106,7 @@ fn brief_source(args: &StartArgs) -> Brief {
 fn cmd_start(g: &GlobalArgs, args: StartArgs) -> Result<i32> {
     let cfg = load_config(g)?;
     if args.detach {
-        return detach(g, &cfg, args);
+        return detach_start(g, &cfg, args);
     }
     let brief = brief_source(&args).read()?;
     let herdr = real_herdr(&cfg, g);
@@ -122,10 +123,7 @@ fn cmd_start(g: &GlobalArgs, args: StartArgs) -> Result<i32> {
 
 /// Re-exec `muster start` in the background with a fixed run id, logging to
 /// `<log_dir>/<run>.log`.
-fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
-    use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
-
+fn detach_start(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
     let store = StateStore::new(cfg.state_dir.clone());
     store.ensure()?;
     let id = match &args.run_id {
@@ -148,6 +146,29 @@ fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
             p
         }
     };
+    let mut child_args: Vec<OsString> = vec![
+        "start".into(),
+        (&args.workflow).into(),
+        "--repo".into(),
+        (&args.repo).into(),
+        "--run-id".into(),
+        (&id).into(),
+        "--brief-file".into(),
+        brief_path.into(),
+    ];
+    for s in &args.skip {
+        child_args.extend(["--skip".into(), s.into()]);
+    }
+    spawn_detached(g, cfg, &id, &child_args)
+}
+
+/// Re-exec muster in the background with `child_args`, appending its output
+/// to `<log_dir>/<id>.log`, and report the run id.
+fn spawn_detached(g: &GlobalArgs, cfg: &Config, id: &str, child_args: &[OsString]) -> Result<i32> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    std::fs::create_dir_all(&cfg.log_dir)?;
     let log_path = cfg.log_dir.join(format!("{id}.log"));
     let log = std::fs::OpenOptions::new()
         .create(true)
@@ -159,20 +180,8 @@ fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
     if g.verbose {
         cmd.arg("-v");
     }
-    cmd.args([
-        "start",
-        &args.workflow,
-        "--repo",
-        &args.repo,
-        "--run-id",
-        &id,
-    ])
-    .arg("--brief-file")
-    .arg(&brief_path);
-    for s in &args.skip {
-        cmd.args(["--skip", s]);
-    }
-    cmd.stdin(Stdio::null())
+    cmd.args(child_args)
+        .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
         .process_group(0);
@@ -185,10 +194,19 @@ fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
     Ok(exit::OK)
 }
 
-fn cmd_resume(g: &GlobalArgs, id: &str) -> Result<i32> {
+fn cmd_resume(g: &GlobalArgs, id: &str, detach: bool) -> Result<i32> {
     let cfg = load_config(g)?;
     let herdr = real_herdr(&cfg, g);
     let engine = Engine::new(&cfg, &herdr, g.verbose, !g.json);
+    if detach {
+        let (lock, st) = engine.resume_preflight(id)?;
+        // The child takes the run lock itself, so release it first.
+        drop(lock);
+        if st.status == RunStatus::Done {
+            return Ok(print_outcome(g, &engine.resume(id)?));
+        }
+        return spawn_detached(g, &cfg, id, &["resume".into(), id.into()]);
+    }
     let outcome = engine.resume(id)?;
     Ok(print_outcome(g, &outcome))
 }

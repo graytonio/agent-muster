@@ -29,7 +29,7 @@ From a laptop, over Tailscale SSH: `ssh muster 'muster start feature --repo foo 
 | `list-workflows` | Workflows in the config dir, with their stages. |
 | `validate [<workflow>]` | Load and validate config, workflows and prompts. No herdr, git or network. |
 | `start <workflow> --repo <repo> (--brief <text> \| --brief-file <path> \| --brief-stdin)` | Start a run. Exactly one brief source is required (write `--brief=-x` for text starting with `-`). `--run-id <id>` to choose the id, `--skip <stage>` (repeatable) for optional stages, `--detach` to run in the background. |
-| `resume <run>` | Continue a run from its recorded stage, using its config snapshot. |
+| `resume <run> [--detach]` | Continue a run from its recorded stage, using its config snapshot. `--detach` checks the run can be resumed, prints its id and continues in the background, logging to `<log_dir>/<run>.log`. |
 | `status [<run>]` | A table of runs, or one run's detail and event log. Shows whether the live config changed since the run started. |
 | `clean <run> [--delete-branch] [--force]` | Close the run's panes and remove its worktree. `--force` cleans a running run and discards uncommitted changes. |
 
@@ -65,6 +65,8 @@ Environment: `MUSTER_CONFIG_DIR`, `HERDR_BIN`, `GH_BIN`, `ENTIRE_BIN`.
 - **The review loop hit `max_iterations`**: read the last `review.md`, fix the code yourself or decide to accept it, rewrite line 1 of `review.md` to `VERDICT: APPROVE`, and resume.
 - **A read-only stage changed files**: revert those changes, then resume.
 - **Finish failed (push or PR)**: fix the cause (auth, remote) and resume; it retries only the finish step.
+
+Over SSH, use `muster resume <run> --detach` so the session does not stay open until the run finishes; follow it with `muster status <run>` or the log in `<log_dir>/<run>.log`.
 
 Resume reads the run's config snapshot, never the live config. If herdr restarted, the agents are gone; resume starts them again in their panes.
 

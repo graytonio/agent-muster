@@ -158,18 +158,7 @@ impl<'a> Engine<'a> {
         }
 
         let _start = self.store.start_lock()?;
-        let active = self.store.active(None)?;
-        if active.len() as u32 >= self.cfg.max_concurrent_runs {
-            bail!(MusterError::new(
-                exit::CONCURRENCY,
-                format!(
-                    "concurrency limit reached: {} of {} runs active ({})",
-                    active.len(),
-                    self.cfg.max_concurrent_runs,
-                    active.join(", ")
-                )
-            ));
-        }
+        self.check_concurrency(None)?;
         let id = match &req.run_id {
             Some(id) => {
                 check_run_id(id)?;
@@ -329,39 +318,55 @@ impl<'a> Engine<'a> {
 
     // --------------------------------------------------------------- resume
 
-    pub fn resume(&self, id: &str) -> Result<Outcome> {
+    /// The up-front checks of a resume, with no changes to the run: id,
+    /// existence, lock, cleaned and concurrency. Returns the held lock and the
+    /// loaded state. A `Done` run passes so the caller can report it.
+    pub fn resume_preflight(&self, id: &str) -> Result<(RunLock, RunState)> {
         check_run_id(id)?;
         if !self.store.exists(id) {
             bail!(MusterError::usage(format!("no run named {id}")));
         }
         let lock = self.store.lock(id)?;
-        let mut st = self.store.load(id)?;
-        match st.status {
-            RunStatus::Done => {
-                self.say(id, "already done");
-                return Ok(Outcome::from_state(&st));
-            }
-            _ if st.cleaned_at.is_some() => {
+        let st = self.store.load(id)?;
+        if st.status != RunStatus::Done {
+            if st.cleaned_at.is_some() {
                 bail!(MusterError::usage(format!(
                     "run {id} was cleaned; it cannot be resumed"
-                )))
+                )));
             }
-            _ => {}
+            let _start = self.store.start_lock()?;
+            self.check_concurrency(Some(id))?;
+        }
+        Ok((lock, st))
+    }
+
+    /// Fail with the concurrency exit code when the limit is reached. The
+    /// caller holds the start lock.
+    fn check_concurrency(&self, except: Option<&str>) -> Result<()> {
+        let active = self.store.active(except)?;
+        if active.len() as u32 >= self.cfg.max_concurrent_runs {
+            bail!(MusterError::new(
+                exit::CONCURRENCY,
+                format!(
+                    "concurrency limit reached: {} of {} runs active ({})",
+                    active.len(),
+                    self.cfg.max_concurrent_runs,
+                    active.join(", ")
+                )
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn resume(&self, id: &str) -> Result<Outcome> {
+        let (lock, mut st) = self.resume_preflight(id)?;
+        if st.status == RunStatus::Done {
+            self.say(id, "already done");
+            return Ok(Outcome::from_state(&st));
         }
         {
             let _start = self.store.start_lock()?;
-            let active = self.store.active(Some(id))?;
-            if active.len() as u32 >= self.cfg.max_concurrent_runs {
-                bail!(MusterError::new(
-                    exit::CONCURRENCY,
-                    format!(
-                        "concurrency limit reached: {} of {} runs active ({})",
-                        active.len(),
-                        self.cfg.max_concurrent_runs,
-                        active.join(", ")
-                    )
-                ));
-            }
+            self.check_concurrency(Some(id))?;
             st.status = RunStatus::Running;
             st.reason = None;
             st.pid = Some(std::process::id());

@@ -46,4 +46,4 @@ Every repo named under `[repos.<name>]` must be cloned (`repo <name>`). Repos wi
 
 - `muster` and `herdr` run as the **same user**, so `muster` can reach herdr's socket.
 - Concurrent runs are limited by `max_concurrent_runs`. Each run holds a lock file in `state_dir` while a process drives it.
-- `muster start --detach` re-executes the same binary in the background; the binary path must stay valid while runs are in flight.
+- `muster start --detach` and `muster resume --detach` re-execute the same binary in the background; the binary path must stay valid while runs are in flight.
