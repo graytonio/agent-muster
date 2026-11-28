@@ -87,7 +87,12 @@ impl Env {
         let mut child = c.spawn().unwrap();
         if let Some(s) = stdin {
             use std::io::Write;
-            child.stdin.take().unwrap().write_all(s.as_bytes()).unwrap();
+            // muster may exit before reading stdin (e.g. a clap usage error),
+            // closing the pipe first; that's not a test failure.
+            match child.stdin.take().unwrap().write_all(s.as_bytes()) {
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+                r => r.unwrap(),
+            }
         }
         drop(child.stdin.take());
         child.wait_with_output().unwrap()
@@ -757,4 +762,134 @@ fn brief_source_conflicts_exit_2() {
         assert_eq!(o.status.code(), Some(2), "{}", out(&o));
         assert!(out(&o).contains("the brief is empty"), "{}", out(&o));
     }
+}
+
+const MERGE_MSG: &str = "muster: merge origin/main into muster/feat/f1 for f1";
+
+/// Start a run whose planner times out, then move the base while it is
+/// escalated. The builder commits `builder_file`. Returns the new base sha.
+fn run_with_moved_base(
+    e: &Env,
+    builder_file: (&str, &str),
+    base_file: (&str, &str),
+) -> (std::process::Output, String) {
+    e.scenario(json!({"agents": {
+        "planner": [{"error": "timeout"}],
+        "builder": [{"commit_repo": {builder_file.0: builder_file.1}, "write": {"build-report.md": "ok\n"}}],
+        "reviewer": [{"write": {"review.md": APPROVE}}]
+    }}));
+    assert_eq!(e.start("feature", &[]).status.code(), Some(3));
+    let sha = common::advance_base(&e.root, "sandbox", base_file.0, base_file.1);
+    std::fs::write(e.run_dir("f1").join("plan.md"), "# Plan by hand\n").unwrap();
+    (e.muster(&["resume", "f1"]), sha)
+}
+
+fn has_merged_event(e: &Env) -> bool {
+    e.state("f1")["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|ev| ev["kind"] == "merged")
+}
+
+fn remote_git(e: &Env, args: &[&str]) -> String {
+    common::git(&e.root.join("remotes/sandbox.git"), args)
+}
+
+#[test]
+fn finish_merges_moved_base() {
+    let e = Env::new();
+    let (o, sha) =
+        run_with_moved_base(&e, ("src/lib.rs", "pub fn x() {}\n"), ("BASE.md", "base\n"));
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+    let st = e.state("f1");
+    assert_eq!(st["status"], "done");
+    assert!(st["pr_url"].is_string());
+    remote_git(&e, &["merge-base", "--is-ancestor", &sha, "muster/feat/f1"]);
+    let merges = common::git(&e.worktree("f1"), &["log", "--merges", "--format=%s"]);
+    assert_eq!(merges, MERGE_MSG);
+    assert!(has_merged_event(&e));
+}
+
+fn conflict_setup(e: &Env) -> String {
+    let (o, sha) = run_with_moved_base(e, ("README.md", "# builder\n"), ("README.md", "# base\n"));
+    assert_eq!(o.status.code(), Some(3), "{}", out(&o));
+    sha
+}
+
+#[test]
+fn finish_conflict_escalates_without_pushing() {
+    let e = Env::new();
+    let head_before = {
+        conflict_setup(&e);
+        common::git(&e.worktree("f1"), &["rev-parse", "HEAD"])
+    };
+    let st = e.state("f1");
+    assert_eq!(st["status"], "needs_human");
+    let reason = st["reason"].as_str().unwrap();
+    assert!(reason.contains("README.md"), "{reason}");
+    assert!(reason.contains("muster resume f1"), "{reason}");
+    let wt = e.worktree("f1");
+    let mh = Command::new("git")
+        .arg("-C")
+        .arg(&wt)
+        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .output()
+        .unwrap();
+    assert!(!mh.status.success());
+    assert!(common::git(&wt, &["status", "--porcelain"]).is_empty());
+    assert!(common::git(&wt, &["log", "--merges", "--format=%s"]).is_empty());
+    assert_eq!(common::git(&wt, &["rev-parse", "HEAD"]), head_before);
+    assert!(remote_git(&e, &["branch", "--list", "muster/feat/f1"]).is_empty());
+    assert!(!e.root.join("gh.args").exists());
+}
+
+#[test]
+fn finish_resume_after_manual_merge_opens_pr() {
+    let e = Env::new();
+    let sha = conflict_setup(&e);
+    let wt = e.worktree("f1");
+    common::git(&wt, &["merge", "-X", "ours", "--no-edit", "origin/main"]);
+    let o = e.muster(&["resume", "f1"]);
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+    let st = e.state("f1");
+    assert_eq!(st["status"], "done");
+    assert!(st["pr_url"].is_string());
+    assert!(e.root.join("gh.args").exists());
+    remote_git(&e, &["merge-base", "--is-ancestor", &sha, "muster/feat/f1"]);
+    let merges = common::git(&wt, &["log", "--merges", "--format=%s"]);
+    assert_eq!(merges.lines().count(), 1, "{merges}");
+    assert_ne!(merges, MERGE_MSG);
+    assert!(!has_merged_event(&e));
+}
+
+#[test]
+fn finish_with_merge_in_progress_escalates() {
+    let e = Env::new();
+    conflict_setup(&e);
+    let wt = e.worktree("f1");
+    let m = Command::new("git")
+        .arg("-C")
+        .arg(&wt)
+        .args(["merge", "--no-edit", "origin/main"])
+        .output()
+        .unwrap();
+    assert!(!m.status.success());
+    let o = e.muster(&["resume", "f1"]);
+    assert_eq!(o.status.code(), Some(3), "{}", out(&o));
+    assert!(e.state("f1")["reason"]
+        .as_str()
+        .unwrap()
+        .contains("merge is in progress"));
+    assert!(remote_git(&e, &["branch", "--list", "muster/feat/f1"]).is_empty());
+}
+
+#[test]
+fn finish_without_base_change_makes_no_merge() {
+    let e = Env::new();
+    e.scenario(json!({"agents": happy_agents()}));
+    let o = e.start("feature", &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", out(&o));
+    assert!(common::git(&e.worktree("f1"), &["log", "--merges", "--format=%s"]).is_empty());
+    assert!(!has_merged_event(&e));
 }

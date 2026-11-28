@@ -53,6 +53,7 @@ One line per non-obvious choice, with the reason.
 - `--detach` picks the run id in the parent (next free id), writes a stdin or inline (`--brief`) brief to `<log_dir>/<run>.brief.md`, and re-execs `muster start ... --run-id <id> --brief-file <path>` in a new process group with output to `<log_dir>/<run>.log`. Two detached starts racing for the same id: the second fails with "run already exists" in its log.
 - The PR body is written to `<state_dir>/<run>/pr-body.md` (not committed): each `pr_body_from` file under a `## <file>` heading, then a footer with the run id, workflow and run dir.
 - `clean` closes the run's agent panes, removes the worktree (`--force` only when given), optionally deletes the local branch, and keeps the state file with `cleaned_at` set so history survives.
+- Finish merges `<remote>/<base_branch>` into the run branch (a `--no-ff` merge commit) rather than rebasing: the branch history is the paper trail, a rebase would rewrite commits and need a force-push, and GitHub does not run `pull_request` checks on a conflicting PR. Conflicts abort the merge and escalate; muster never pushes an in-progress merge.
 
 ## Entire (checked against docs.entire.com CLI reference; not installed locally)
 

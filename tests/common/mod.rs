@@ -57,3 +57,30 @@ pub fn herdr_log(state: &Path) -> Vec<Vec<String>> {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect()
 }
+
+/// Commit `file` with `content` on `main` of the bare remote `<root>/remotes/<name>.git`
+/// (through a scratch clone) and return the new commit sha.
+pub fn advance_base(root: &Path, name: &str, file: &str, content: &str) -> String {
+    let remote = root.join("remotes").join(format!("{name}.git"));
+    let clone = root.join(format!("advance-{name}"));
+    let _ = std::fs::remove_dir_all(&clone);
+    let out = Command::new("git")
+        .args(["clone", "-q"])
+        .arg(&remote)
+        .arg(&clone)
+        .output()
+        .expect("clone");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(clone.join(file), content).unwrap();
+    git(&clone, &["add", file]);
+    git(
+        &clone,
+        &["commit", "-q", "-m", &format!("base: change {file}")],
+    );
+    git(&clone, &["push", "-q", "origin", "HEAD:main"]);
+    git(&clone, &["rev-parse", "HEAD"])
+}
