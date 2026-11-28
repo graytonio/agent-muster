@@ -87,7 +87,12 @@ impl Env {
         let mut child = c.spawn().unwrap();
         if let Some(s) = stdin {
             use std::io::Write;
-            child.stdin.take().unwrap().write_all(s.as_bytes()).unwrap();
+            // muster may exit before reading stdin (e.g. a clap usage error),
+            // closing the pipe first; that's not a test failure.
+            match child.stdin.take().unwrap().write_all(s.as_bytes()) {
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+                r => r.unwrap(),
+            }
         }
         drop(child.stdin.take());
         child.wait_with_output().unwrap()
