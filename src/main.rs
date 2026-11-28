@@ -93,16 +93,21 @@ fn print_outcome(g: &GlobalArgs, o: &Outcome) -> i32 {
     code
 }
 
+/// Map the (mutually exclusive) brief flags to a `Brief`.
+fn brief_source(args: &StartArgs) -> Brief {
+    match (&args.brief, &args.brief_file) {
+        (Some(t), _) => Brief::Text(t.clone()),
+        (None, Some(p)) => Brief::File(p.clone()),
+        (None, None) => Brief::Stdin,
+    }
+}
+
 fn cmd_start(g: &GlobalArgs, args: StartArgs) -> Result<i32> {
     let cfg = load_config(g)?;
     if args.detach {
         return detach(g, &cfg, args);
     }
-    let brief = match &args.brief_file {
-        Some(p) => Brief::File(p.clone()),
-        None => Brief::Stdin,
-    }
-    .read()?;
+    let brief = brief_source(&args).read()?;
     let herdr = real_herdr(&cfg, g);
     let engine = Engine::new(&cfg, &herdr, g.verbose, !g.json);
     let outcome = engine.start(StartRequest {
@@ -136,7 +141,7 @@ fn detach(g: &GlobalArgs, cfg: &Config, args: StartArgs) -> Result<i32> {
         Some(p) => std::fs::canonicalize(p)
             .map_err(|e| MusterError::usage(format!("cannot read brief {}: {e}", p.display())))?,
         None => {
-            let text = Brief::Stdin.read()?;
+            let text = brief_source(&args).read()?;
             let p = cfg.log_dir.join(format!("{id}.brief.md"));
             std::fs::write(&p, text)?;
             p
